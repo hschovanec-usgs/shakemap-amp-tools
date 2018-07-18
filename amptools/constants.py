@@ -1,3 +1,5 @@
+import scipy.constants as sp
+
 CONFIG_FILE = '.amptools/config.yml'
 
 DEFAULT_CONFIG = {
@@ -35,3 +37,5 @@ DEFAULT_CONFIG = {
                 'imtlist': ['PGA', 'PGV', 'SA(0.3)', 'SA(1.0)', 'SA(3.0)']
         }
 }
+
+GAL_TO_PCTG = 1 / sp.g
