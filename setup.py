@@ -1,4 +1,5 @@
 from distutils.core import setup
+from Cython.Build import cythonize
 import glob
 
 setup(name='amptools',
@@ -6,6 +7,7 @@ setup(name='amptools',
       description='USGS ShakeMap Strong Motion Data Tools',
       include_package_data=True,
       author='Mike Hearne',
+      ext_modules=cythonize("pgm/oscillators.pyx"),
       author_email='mhearne@usgs.gov',
       url='',
       packages=['amptools',

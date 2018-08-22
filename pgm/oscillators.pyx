@@ -39,8 +39,51 @@ def get_acceleration(stream, units='%%g'):
 
     return accel_stream
 
+def calculate_spectrals(times, acc, period, damping):
+    cdef float dt = times[1] - times[0]
+    cdef int npoints = len(acc)
+    cdef int initialdisp = 0
+    cdef int initialvel = 0
+    cdef int damp = damping
+    d = np.zeros(npoints)
+    v = np.zeros(npoints)
+    aa = np.zeros(npoints)
 
-def get_spectral(period, stream, damping, rotation=None):
+    d[0] = initialdisp
+    v[0] = initialvel
+
+    cdef float w = 2 * np.pi / period
+    cdef float ww = w ** 2
+
+    cdef float sqrtd  = np.sqrt(1 - damp**2)
+    cdef float wd = w * sqrtd
+    cdef float e = np.exp( - w * dt * damp)
+    cdef float sine = np.sin(wd * dt)
+    cdef float cosine = np.cos(wd * dt)
+    aa[0] =  - ww * d[0] - (2. * damp * w) * v[0]
+
+    cdef float a11 = e * ((damp / sqrtd) * sine + cosine)
+    cdef float a12 = e * sine / wd
+    cdef float cc = (e * (((1. - 2 * damp**2) / wd - (damp / sqrtd) * dt) * sine - ((2. * damp / w) + dt) * cosine) + (2. * damp / w)) * (-1. / (ww * dt))
+    cdef float cd = (e * ( - (1. - 2 * damp**2) / wd * sine + (2. * damp / w) * cosine) + dt - (2. * damp / w)) * (-1. / (ww * dt))
+    cdef float a21 =  - e * w * sine / sqrtd
+    cdef float a22 = e * (cosine - (damp / sqrtd) * sine)
+    cdef float ccp = (e * ((w * dt / sqrtd  + (damp / sqrtd)) * sine + cosine) - 1.) * (-1. / (ww * dt))
+    cdef float cdp = (1. - a11) * (-1. / (ww * dt))
+
+    for i in np.arange(1, npoints):
+        d[i]  = a11 * d[i - 1]  +  \
+                a12 * v[i - 1]  +  \
+                cc * acc[i - 1]  +  \
+                cd * acc[i]
+        v[i]  = a21 * d[i - 1] + \
+                a22 * v[i - 1] + \
+                ccp * acc[i - 1] + \
+                cdp * acc[i]
+        aa[i] =  - ww * d[i] - (2. * damp * w) * v[i]
+    return (aa, v, d)
+
+def get_spectral(period, stream, damping=0.05, rotation=None):
     """
     Returns a stream of spectral response with units of %%g.
     Args:
@@ -53,12 +96,6 @@ def get_spectral(period, stream, damping, rotation=None):
     Returns:
         obpsy.core.stream.Stream: stream of spectral response.
     """
-    T = period
-    freq = 1.0 / T
-    omega = (2 * 3.14159 * freq) ** 2
-    paz_sa = corn_freq_2_paz(freq, damp=damping)
-    paz_sa['sensitivity'] = omega
-    paz_sa['zeros'] = []
     spect_stream = Stream()
 
     horizontals = []
@@ -68,24 +105,16 @@ def get_spectral(period, stream, damping, rotation=None):
         if 'Z' not in trace.stats['channel'].upper():
             horizontals += [trace.copy()]
     h1_stats = horizontals[0].stats
+    h1_times = horizontals[0].times()
 
     if rotation is None:
         for trace in stream:
-            samp_rate = trace.stats['sampling_rate']
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                dd = simulate_seismometer(trace.data, samp_rate,
-                                          paz_remove=None,
-                                          paz_simulate=paz_sa,
-                                          taper=True,
-                                          simulate_sensitivity=True,
-                                          taper_fraction=0.05)
-            period_str = 'T' + '{:04.2f}'.format(T)
-            stats_out = trace.stats.copy()
-            stats_out['period'] = period_str
-            spect_trace = Trace(dd, stats_out)
-            spect_trace.data = spect_trace.data * GAL_TO_PCTG
-            spect_trace.stats['units'] = '%%g'
+            acc_sa = calculate_spectrals(trace.times(), trace.data,
+                    period, damping)[0]
+            stats = trace.stats.copy()
+            stats['units'] = '%%g'
+            acc_sa = acc_sa * GAL_TO_PCTG
+            spect_trace = Trace(data=acc_sa, header=stats)
             spect_stream.append(spect_trace)
         return spect_stream
     elif rotation.lower() == 'nongm':
@@ -103,22 +132,12 @@ def get_spectral(period, stream, damping, rotation=None):
     for rot_matrix in rot:
         rotated_spectrals = np.zeros(rot_matrix.shape)
         for idx, row in enumerate(rot_matrix):
-            samp_rate = h1_stats['sampling_rate']
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                dd = simulate_seismometer(row, samp_rate,
-                                          paz_remove=None,
-                                          paz_simulate=paz_sa,
-                                          taper=True,
-                                          simulate_sensitivity=True,
-                                          taper_fraction=0.05)
-
-            period_str = 'T' + '{:04.2f}'.format(T)
-            stats_out = h1_stats.copy()
-            stats_out['period'] = period_str
-            spect_trace = Trace(dd, stats_out)
-            spect_trace.data = spect_trace.data * GAL_TO_PCTG
-            spect_trace.stats['units'] = '%%g'
+            acc_sa = calculate_spectrals(h1_times, row,
+                    period, damping)[0]
+            stats = h1_stats.copy()
+            stats['units'] = '%%g'
+            acc_sa = acc_sa * GAL_TO_PCTG
+            spect_trace = Trace(data=acc_sa, header=stats)
             rotated_spectrals[idx] = spect_trace
         rotated += [rotated_spectrals]
     return rotated
